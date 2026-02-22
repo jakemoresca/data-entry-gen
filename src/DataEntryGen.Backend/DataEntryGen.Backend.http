@@ -1,0 +1,6 @@
+@DataEntryGen.Backend_HostAddress = http://localhost:5132
+
+GET {{DataEntryGen.Backend_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
