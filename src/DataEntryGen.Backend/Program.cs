@@ -1,5 +1,7 @@
 using DataEntryGen.Backend.Data;
 using DataEntryGen.Backend.Services;
+using DataEntryGen.Backend.Services.Registration;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
@@ -11,6 +13,8 @@ builder.AddNpgsqlDbContext<DataEntryDbContext>("dataentrygendb");
 // Register generic services
 builder.Services.AddScoped<ISchemaDiscoveryService, SchemaDiscoveryService>();
 builder.Services.AddScoped<IGenericDataService, GenericDataService>();
+builder.Services.AddScoped<IRegistrationRepository, RegistrationRepository>();
+builder.Services.AddScoped<RegistrationInitializer>();
 
 // Add controllers and OpenAPI
 builder.Services.AddControllers();
