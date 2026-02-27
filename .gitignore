@@ -54,3 +54,5 @@ npm-debug.log
 
 # Windows
 Thumbs.db
+.github/instructions/**
+.github/agents/**

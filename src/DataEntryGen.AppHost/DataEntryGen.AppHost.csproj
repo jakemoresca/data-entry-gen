@@ -15,5 +15,6 @@
   <ItemGroup>
     <ProjectReference Include="../DataEntryGen.Backend/DataEntryGen.Backend.csproj" />
     <ProjectReference Include="../DataEntryGen.Frontend/DataEntryGen.Frontend.csproj" />
+    <ProjectReference Include="../DataEntryGen.Tools/DataEntryGen.Tools.csproj" />
   </ItemGroup>
 </Project>
