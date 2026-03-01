@@ -31,12 +31,16 @@ db.WithCommand("test-data", "Test Data", async (ctx) =>
 });
 
 // Add Backend API project
-var backendProject = builder.AddProject("backend", "../DataEntryGen.Backend/DataEntryGen.Backend.csproj")
+var backendProject = builder.AddProject<Projects.DataEntryGen_Backend>("backend")
     .WithReference(db)
     .WithHttpsEndpoint(port: 5001, name: "https");
 
 // Add Frontend Blazor WASM project
-var frontendProject = builder.AddProject("frontend", "../DataEntryGen.Frontend/DataEntryGen.Frontend.csproj")
-    .WithHttpsEndpoint(port: 5002, name: "https");
+// var frontendProject = builder.AddProject<Projects.DataEntryGen_Frontend>("frontend")
+//     .WithHttpsEndpoint(port: 5002, name: "https");
+
+var frontEndDirectory = Path.Combine(builder.AppHostDirectory, "..", "client");
+var frontendApp = builder.AddViteApp("frontend-app", frontEndDirectory)
+    .WithReference(backendProject);
 
 builder.Build().Run();

@@ -2,7 +2,6 @@
   <Folder Name="/src/">
     <Project Path="src/DataEntryGen.AppHost/DataEntryGen.AppHost.csproj" />
     <Project Path="src/DataEntryGen.Backend/DataEntryGen.Backend.csproj" />
-    <Project Path="src/DataEntryGen.Frontend/DataEntryGen.Frontend.csproj" />
     <Project Path="src/DataEntryGen.Tools/DataEntryGen.Tools.csproj" />
   </Folder>
 </Solution>
