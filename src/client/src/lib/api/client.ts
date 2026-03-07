@@ -2,6 +2,7 @@ import type {
   RegistrationRecord,
   TableInfo,
   DataRow,
+  LayoutRecord,
   ApiError,
 } from "../types";
 
@@ -61,7 +62,7 @@ class ApiClient {
     return this.handleResponse<T>(response);
   }
 
-  async post<T>(path: string, data?: any): Promise<T> {
+  async post<T>(path: string, data?: unknown): Promise<T> {
     const response = await fetch(`${this.baseUrl}/${path}`, {
       method: "POST",
       headers: {
@@ -72,7 +73,7 @@ class ApiClient {
     return this.handleResponse<T>(response);
   }
 
-  async put<T>(path: string, data: any): Promise<T> {
+  async put<T>(path: string, data: unknown): Promise<T> {
     const response = await fetch(`${this.baseUrl}/${path}`, {
       method: "PUT",
       headers: {
@@ -133,4 +134,26 @@ export const dataApi = {
   
   deleteRow: (tableName: string, id: string) =>
     apiClient.delete<void>(`api/data/${tableName}/${encodeURIComponent(id)}`),
+};
+
+/**
+ * Layout API methods
+ */
+export const layoutApi = {
+  getAll: () => apiClient.get<LayoutRecord[]>("api/layouts"),
+
+  getById: (id: string) =>
+    apiClient.get<LayoutRecord>(`api/layouts/${id}`),
+
+  getByRegistration: (registrationId: string) =>
+    apiClient.get<LayoutRecord[]>(`api/layouts/registration/${registrationId}`),
+
+  create: (data: LayoutRecord) =>
+    apiClient.post<LayoutRecord>("api/layouts", data),
+
+  update: (id: string, data: LayoutRecord) =>
+    apiClient.put<void>(`api/layouts/${id}`, data),
+
+  delete: (id: string) =>
+    apiClient.delete<void>(`api/layouts/${id}`),
 };

@@ -38,3 +38,34 @@ export interface ApiResponse<T> {
   error?: string;
   message?: string;
 }
+
+export type LayoutType = "list" | "detail";
+export type DatasourceType = "hardcoded" | "table";
+export type DisplayType = "label" | "text" | "number" | "textarea" | "dropdown" | "button";
+export type ButtonAction = "link" | "save" | "delete";
+
+export interface LayoutElementConfig {
+  column: string;
+  label: string;
+  value: string;
+  disabled: boolean;
+  columnWidth: number;
+  displayType: DisplayType;
+  datasourceType?: DatasourceType;
+  datasource?: string;
+  action?: ButtonAction;
+}
+
+export interface LayoutDefinition {
+  title: string;
+  layoutType: "table" | "form";
+  layout: LayoutElementConfig[];
+}
+
+export interface LayoutRecord {
+  id: string;
+  name: string;
+  type: LayoutType;
+  registrationId: string;
+  layout: LayoutDefinition;
+}

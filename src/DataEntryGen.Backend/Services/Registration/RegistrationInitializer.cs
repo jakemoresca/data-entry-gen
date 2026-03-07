@@ -1,17 +1,22 @@
+using DataEntryGen.Backend.Services.Layouts;
+
 namespace DataEntryGen.Backend.Services.Registration
 {
     public class RegistrationInitializer
     {
         private readonly IRegistrationRepository _repo;
+        private readonly ILayoutRepository _layoutRepo;
 
-        public RegistrationInitializer(IRegistrationRepository repo)
+        public RegistrationInitializer(IRegistrationRepository repo, ILayoutRepository layoutRepo)
         {
             _repo = repo;
+            _layoutRepo = layoutRepo;
         }
 
-        public Task InitializeAsync()
+        public async Task InitializeAsync()
         {
-            return _repo.InitializeAsync();
+            await _repo.InitializeAsync();
+            await _layoutRepo.InitializeAsync();
         }
     }
 }

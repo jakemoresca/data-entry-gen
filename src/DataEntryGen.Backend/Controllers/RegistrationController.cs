@@ -1,4 +1,5 @@
 using DataEntryGen.Backend.Services;
+using DataEntryGen.Backend.Services.Layouts;
 using DataEntryGen.Backend.Services.Registration;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
@@ -10,14 +11,18 @@ namespace DataEntryGen.Backend.Controllers
     public class RegistrationController : ControllerBase
     {
         private readonly IRegistrationRepository _repo;
+        private readonly ILayoutRepository _layoutRepo;
         private readonly RegistrationInitializer _initializer;
+        private readonly LayoutTemplateService _layoutTemplates;
         private readonly ISchemaDiscoveryService _discovery;
         private readonly ILogger<RegistrationController> _logger;
 
-        public RegistrationController(IRegistrationRepository repo, RegistrationInitializer initializer, ISchemaDiscoveryService discovery, ILogger<RegistrationController> logger)
+        public RegistrationController(IRegistrationRepository repo, ILayoutRepository layoutRepo, RegistrationInitializer initializer, LayoutTemplateService layoutTemplates, ISchemaDiscoveryService discovery, ILogger<RegistrationController> logger)
         {
             _repo = repo;
+            _layoutRepo = layoutRepo;
             _initializer = initializer;
+            _layoutTemplates = layoutTemplates;
             _discovery = discovery;
             _logger = logger;
         }
@@ -47,6 +52,23 @@ namespace DataEntryGen.Backend.Controllers
         public async Task<IActionResult> Create([FromBody] RegistrationRecord record)
         {
             var created = await _repo.CreateAsync(record);
+
+            try
+            {
+                var schema = await _discovery.GetTableSchemaAsync(created.TableName);
+                if (schema is not null)
+                {
+                    var listLayout = _layoutTemplates.BuildDefaultListLayout(created, schema);
+                    var detailLayout = _layoutTemplates.BuildDefaultDetailLayout(created, schema);
+                    await _layoutRepo.AddIfNameNotExistsAsync(listLayout);
+                    await _layoutRepo.AddIfNameNotExistsAsync(detailLayout);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to create default layouts for registration {RegistrationId}", created.Id);
+            }
+
             return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
         }
 
@@ -61,6 +83,7 @@ namespace DataEntryGen.Backend.Controllers
         [HttpDelete("{id:guid}")]
         public async Task<IActionResult> Delete(Guid id)
         {
+            await _layoutRepo.DeleteByRegistrationIdAsync(id);
             var ok = await _repo.DeleteAsync(id);
             return ok ? NoContent() : NotFound();
         }
@@ -90,7 +113,18 @@ namespace DataEntryGen.Backend.Controllers
                 try
                 {
                     var addedNow = await _repo.AddIfNotExistsAsync(rec);
-                    if (addedNow) added.Add(rec);
+                    if (!addedNow)
+                    {
+                        continue;
+                    }
+
+                    added.Add(rec);
+
+                    var listLayout = _layoutTemplates.BuildDefaultListLayout(rec, t);
+                    var detailLayout = _layoutTemplates.BuildDefaultDetailLayout(rec, t);
+
+                    await _layoutRepo.AddIfNameNotExistsAsync(listLayout);
+                    await _layoutRepo.AddIfNameNotExistsAsync(detailLayout);
                 }
                 catch (Exception ex)
                 {

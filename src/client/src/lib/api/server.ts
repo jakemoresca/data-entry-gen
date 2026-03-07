@@ -1,4 +1,4 @@
-import type { RegistrationRecord, TableInfo } from "../types";
+import type { LayoutRecord, RegistrationRecord, TableInfo } from "../types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://localhost:5001";
 
@@ -18,7 +18,11 @@ export async function getAllRegistrations(): Promise<RegistrationRecord[]> {
 export async function getTableSchema(tableName: string): Promise<TableInfo | null> {
   try {
     return await fetchJson<TableInfo>(`api/schema/tables/${encodeURIComponent(tableName)}`);
-  } catch (err) {
+  } catch {
     return null;
   }
+}
+
+export async function getAllLayouts(): Promise<LayoutRecord[]> {
+  return fetchJson<LayoutRecord[]>("api/layouts");
 }

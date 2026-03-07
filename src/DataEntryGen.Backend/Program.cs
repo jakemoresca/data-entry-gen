@@ -1,5 +1,6 @@
 using DataEntryGen.Backend.Data;
 using DataEntryGen.Backend.Services;
+using DataEntryGen.Backend.Services.Layouts;
 using DataEntryGen.Backend.Services.Registration;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +15,8 @@ builder.AddNpgsqlDbContext<DataEntryDbContext>("dataentrygendb");
 builder.Services.AddScoped<ISchemaDiscoveryService, SchemaDiscoveryService>();
 builder.Services.AddScoped<IGenericDataService, GenericDataService>();
 builder.Services.AddScoped<IRegistrationRepository, RegistrationRepository>();
+builder.Services.AddScoped<ILayoutRepository, LayoutRepository>();
+builder.Services.AddScoped<LayoutTemplateService>();
 builder.Services.AddScoped<RegistrationInitializer>();
 
 // Add controllers and OpenAPI

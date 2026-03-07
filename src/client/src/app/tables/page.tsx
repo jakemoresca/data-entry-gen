@@ -70,6 +70,7 @@ export default function TablesPage() {
                   <TableHead>Table</TableHead>
                   <TableHead>ID Column</TableHead>
                   <TableHead>Description</TableHead>
+                  <TableHead className="text-right">Layouts</TableHead>
                   <TableHead className="text-right">Open</TableHead>
                 </TableRow>
               </TableHeader>
@@ -79,6 +80,11 @@ export default function TablesPage() {
                     <TableCell className="font-medium">{registration.tableName}</TableCell>
                     <TableCell>{registration.idColumnName || "-"}</TableCell>
                     <TableCell>{registration.description || "-"}</TableCell>
+                    <TableCell className="text-right">
+                      <Link href={`/layouts?registrationId=${encodeURIComponent(registration.id)}`}>
+                        <Button size="sm" variant="outline">Manage Layouts</Button>
+                      </Link>
+                    </TableCell>
                     <TableCell className="text-right">
                       <Link href={`/tables/${encodeURIComponent(registration.tableName)}`}>
                         <Button size="sm">Manage</Button>

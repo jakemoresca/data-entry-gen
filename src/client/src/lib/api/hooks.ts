@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { registrationApi, schemaApi, dataApi } from "./client";
-import type { DataRow } from "../types";
+import { registrationApi, schemaApi, dataApi, layoutApi } from "./client";
+import type { DataRow, LayoutRecord } from "../types";
 
 /**
  * Query keys for cache management
@@ -9,6 +9,9 @@ export const queryKeys = {
   registrations: ["registrations"] as const,
   tableSchema: (tableName: string) => ["tableSchema", tableName] as const,
   tableData: (tableName: string) => ["tableData", tableName] as const,
+  layouts: ["layouts"] as const,
+  layoutById: (id: string) => ["layouts", id] as const,
+  layoutsByRegistration: (registrationId: string) => ["layouts", "registration", registrationId] as const,
 };
 
 /**
@@ -105,6 +108,66 @@ export function useDeleteRow(tableName: string) {
     mutationFn: (id: string) => dataApi.deleteRow(tableName, id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tableData(tableName) });
+    },
+  });
+}
+
+/**
+ * Layout hooks
+ */
+export function useLayouts() {
+  return useQuery({
+    queryKey: queryKeys.layouts,
+    queryFn: layoutApi.getAll,
+  });
+}
+
+export function useLayout(layoutId: string) {
+  return useQuery({
+    queryKey: queryKeys.layoutById(layoutId),
+    queryFn: () => layoutApi.getById(layoutId),
+    enabled: !!layoutId,
+  });
+}
+
+export function useLayoutsByRegistration(registrationId: string) {
+  return useQuery({
+    queryKey: queryKeys.layoutsByRegistration(registrationId),
+    queryFn: () => layoutApi.getByRegistration(registrationId),
+    enabled: !!registrationId,
+  });
+}
+
+export function useCreateLayout() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: layoutApi.create,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.layouts });
+    },
+  });
+}
+
+export function useUpdateLayout() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: LayoutRecord }) => layoutApi.update(id, data),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.layouts });
+      queryClient.invalidateQueries({ queryKey: queryKeys.layoutById(variables.id) });
+    },
+  });
+}
+
+export function useDeleteLayout() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => layoutApi.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.layouts });
     },
   });
 }
