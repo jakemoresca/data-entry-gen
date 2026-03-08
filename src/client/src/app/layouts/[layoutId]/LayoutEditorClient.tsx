@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Loader2, Plus } from "lucide-react";
@@ -35,6 +35,7 @@ function normalizeLayoutDefinition(input: LayoutDefinitionLike | null | undefine
     columnWidth: Number(item?.columnWidth ?? 30),
     displayType: DISPLAY_TYPES.includes((item?.displayType as DisplayType) ?? "label") ? (item?.displayType as DisplayType) : "label",
     datasourceType: item?.datasourceType,
+    useDatasource: Boolean(item?.useDatasource ?? false),
     datasource: item?.datasource,
     action: item?.action,
   }));
@@ -55,9 +56,34 @@ function createElement(displayType: DisplayType, columnName?: string): LayoutEle
     columnWidth: 30,
     displayType,
     datasourceType: displayType === "dropdown" ? "hardcoded" : undefined,
+    useDatasource: false,
     datasource: displayType === "dropdown" ? "choice 1|choice 2" : undefined,
     action: displayType === "button" ? "save" : undefined,
   };
+}
+
+function parseTableDatasource(ds?: string | null) {
+  if (!ds) return { registrationId: "", displayColumn: "", valueColumn: "" };
+  const parts = ds.split("|");
+  return {
+    registrationId: parts[0] || "",
+    displayColumn: parts[1] || "",
+    valueColumn: parts[2] || "",
+  };
+}
+
+function parseHardcodedPairs(ds?: string | null) {
+  if (!ds) return [] as { name: string; value: string }[];
+  const parts = ds.split("|").map((p) => p.trim()).filter(Boolean);
+  const pairs: { name: string; value: string }[] = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    pairs.push({ name: parts[i] ?? "", value: parts[i + 1] ?? "" });
+  }
+  return pairs;
+}
+
+function buildTableDatasource(registrationId: string, displayColumn: string, valueColumn: string) {
+  return `${registrationId}|${displayColumn}|${valueColumn}`;
 }
 
 export default function LayoutEditorClient() {
@@ -100,6 +126,31 @@ export default function LayoutEditorClient() {
   const { data: schema } = useTableSchema(registration?.tableName || "");
 
   const selectedElement = selectedIndex !== null ? workingRecord?.layout.layout[selectedIndex] : null;
+
+  // local selected datasource parsing for table datasource editing (kept in state to avoid render mismatches)
+  const [dsRegId, setDsRegId] = useState<string>("");
+  const [dsDisplayColumn, setDsDisplayColumn] = useState<string>("");
+  const [dsValueColumn, setDsValueColumn] = useState<string>("");
+
+  useEffect(() => {
+    if (!selectedElement) {
+      setDsRegId("");
+      setDsDisplayColumn("");
+      setDsValueColumn("");
+      return;
+    }
+
+    const parsed = parseTableDatasource(selectedElement.datasource);
+    setDsRegId(parsed.registrationId);
+    setDsDisplayColumn(parsed.displayColumn);
+    setDsValueColumn(parsed.valueColumn);
+  }, [selectedElement]);
+
+  const selectedRegistration = useMemo(() => {
+    return registrations.find((r) => r.id === dsRegId) || null;
+  }, [registrations, dsRegId]);
+
+  const { data: selectedSchema } = useTableSchema(selectedRegistration?.tableName || "");
 
   const updateDraft = (updater: (current: LayoutRecord) => LayoutRecord) => {
     if (!workingRecord) {
@@ -415,10 +466,42 @@ export default function LayoutEditorClient() {
                 </div>
                 <div className="space-y-2">
                   <Label>Value</Label>
-                  <Input
-                    value={selectedElement.value}
-                    onChange={(e) => updateSelectedElement({ value: e.target.value })}
-                  />
+                  {selectedElement.displayType === "dropdown" ? (
+                    selectedElement.datasourceType === "hardcoded" ? (
+                      <Select
+                        value={selectedElement.value || "__none__"}
+                        onValueChange={(value) => updateSelectedElement({ value: value === "__none__" ? "" : value })}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">None</SelectItem>
+                          {parseHardcodedPairs(selectedElement.datasource).map((opt) => (
+                            <SelectItem key={opt.value || opt.name} value={opt.value}>{opt.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Select
+                        value={selectedElement.value || "__none__"}
+                        onValueChange={(value) => updateSelectedElement({ value: value === "__none__" ? "" : value })}
+                        disabled
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Select value at runtime" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">None</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )
+                  ) : (
+                    <Input
+                      value={selectedElement.value}
+                      onChange={(e) => updateSelectedElement({ value: e.target.value })}
+                    />
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Display Type</Label>
@@ -454,6 +537,121 @@ export default function LayoutEditorClient() {
                   <Label htmlFor="disabled">Disabled</Label>
                 </div>
 
+                {selectedElement.displayType === "label" && (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="use-datasource"
+                        type="checkbox"
+                        checked={Boolean(selectedElement.useDatasource)}
+                        onChange={(e) => updateSelectedElement({ useDatasource: e.target.checked })}
+                      />
+                      <Label htmlFor="use-datasource">Use datasource for label</Label>
+                    </div>
+
+                    {selectedElement.useDatasource && (
+                      <>
+                        <div className="space-y-2">
+                          <Label>Datasource Type</Label>
+                          <Select
+                            value={selectedElement.datasourceType || "hardcoded"}
+                            onValueChange={(value) => updateSelectedElement({ datasourceType: value as "hardcoded" | "table" })}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="hardcoded">hardcoded</SelectItem>
+                              <SelectItem value="table">table</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {selectedElement.datasourceType === "table" ? (
+                          <>
+                            <div className="space-y-2">
+                              <Label>Table (registration)</Label>
+                              <Select
+                                value={dsRegId || "__none__"}
+                                onValueChange={(value) => {
+                                  const regId = value === "__none__" ? "" : value || "";
+                                  setDsRegId(regId);
+                                  setDsDisplayColumn("");
+                                  setDsValueColumn("");
+                                  updateSelectedElement({ datasource: buildTableDatasource(regId, "", ""), datasourceType: "table" });
+                                }}
+                              >
+                                <SelectTrigger className="w-full">
+                                  <SelectValue placeholder="Choose table (registration)" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">None</SelectItem>
+                                  {registrations.map((r) => (
+                                    <SelectItem key={r.id} value={r.id}>{r.tableName || r.id}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label>Display Column</Label>
+                              <Select
+                                value={dsDisplayColumn || "__none__"}
+                                onValueChange={(value) => {
+                                  const val = value === "__none__" ? "" : value || "";
+                                  setDsDisplayColumn(val);
+                                  updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", val, dsValueColumn || "") });
+                                }}
+                              >
+                                <SelectTrigger className="w-full">
+                                  <SelectValue placeholder="Choose display column" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">None</SelectItem>
+                                  {(selectedSchema?.columns || []).map((col) => (
+                                    <SelectItem key={col.name} value={col.name}>{col.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label>Value Column</Label>
+                              <Select
+                                value={dsValueColumn || "__none__"}
+                                onValueChange={(value) => {
+                                  const val = value === "__none__" ? "" : value || "";
+                                  setDsValueColumn(val);
+                                  updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", dsDisplayColumn || "", val) });
+                                }}
+                              >
+                                <SelectTrigger className="w-full">
+                                  <SelectValue placeholder="Choose value column" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">None</SelectItem>
+                                  {(selectedSchema?.columns || []).map((col) => (
+                                    <SelectItem key={col.name} value={col.name}>{col.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="space-y-2">
+                            <Label>Datasource (name|value pairs)</Label>
+                            <Input
+                              value={selectedElement.datasource || ""}
+                              onChange={(e) => updateSelectedElement({ datasource: e.target.value })}
+                              placeholder="Example: Red|1|Blue|2"
+                            />
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+
                 {selectedElement.displayType === "dropdown" && (
                   <>
                     <div className="space-y-2">
@@ -471,14 +669,86 @@ export default function LayoutEditorClient() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="space-y-2">
-                      <Label>Datasource</Label>
-                      <Input
-                        value={selectedElement.datasource || ""}
-                        onChange={(e) => updateSelectedElement({ datasource: e.target.value })}
-                        placeholder="hardcoded: choice 1|choice 2 or table: <registrationId>|<displayColumn>|<valueColumn>"
-                      />
-                    </div>
+                    {selectedElement.datasourceType === "table" ? (
+                      <>
+                        <div className="space-y-2">
+                          <Label>Table (registration)</Label>
+                          <Select
+                            value={dsRegId || "__none__"}
+                            onValueChange={(value) => {
+                              const regId = value === "__none__" ? "" : value || "";
+                              setDsRegId(regId);
+                              setDsDisplayColumn("");
+                              setDsValueColumn("");
+                              updateSelectedElement({ datasource: buildTableDatasource(regId, "", ""), datasourceType: "table" });
+                            }}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Choose table (registration)" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">None</SelectItem>
+                              {registrations.map((r) => (
+                                <SelectItem key={r.id} value={r.id}>{r.tableName || r.id}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Display Column</Label>
+                          <Select
+                            value={dsDisplayColumn || "__none__"}
+                            onValueChange={(value) => {
+                              const val = value === "__none__" ? "" : value || "";
+                              setDsDisplayColumn(val);
+                              updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", val, dsValueColumn || "") });
+                            }}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Choose display column" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">None</SelectItem>
+                              {(selectedSchema?.columns || []).map((col) => (
+                                <SelectItem key={col.name} value={col.name}>{col.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Value Column</Label>
+                          <Select
+                            value={dsValueColumn || "__none__"}
+                            onValueChange={(value) => {
+                              const val = value === "__none__" ? "" : value || "";
+                              setDsValueColumn(val);
+                              updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", dsDisplayColumn || "", val) });
+                            }}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Choose value column" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">None</SelectItem>
+                              {(selectedSchema?.columns || []).map((col) => (
+                                <SelectItem key={col.name} value={col.name}>{col.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="space-y-2">
+                        <Label>Datasource</Label>
+                        <Input
+                          value={selectedElement.datasource || ""}
+                          onChange={(e) => updateSelectedElement({ datasource: e.target.value })}
+                          placeholder="hardcoded: choice 1|choice 2 or table: <registrationId>|<displayColumn>|<valueColumn>"
+                        />
+                      </div>
+                    )}
                   </>
                 )}
 

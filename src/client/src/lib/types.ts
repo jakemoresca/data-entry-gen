@@ -52,6 +52,7 @@ export interface LayoutElementConfig {
   columnWidth: number;
   displayType: DisplayType;
   datasourceType?: DatasourceType;
+  useDatasource?: boolean;
   datasource?: string;
   action?: ButtonAction;
 }

@@ -309,16 +309,16 @@ namespace DataEntryGen.Backend.Services
             {
                 switch (je.ValueKind)
                 {
-                    case JsonValueKind.String:
-                        var s = je.GetString();
-                        if (!string.IsNullOrEmpty(s) &&
-                            !string.IsNullOrEmpty(columnName) &&
-                            string.Equals(columnName, "id", StringComparison.OrdinalIgnoreCase) &&
-                            Guid.TryParse(s, out var g))
-                        {
-                            return g;
-                        }
-                        return s;
+                        case JsonValueKind.String:
+                            var s = je.GetString();
+                            if (!string.IsNullOrEmpty(s))
+                            {
+                                if (Guid.TryParse(s, out var g))
+                                {
+                                    return g;
+                                }
+                            }
+                            return s;
                     case JsonValueKind.Number:
                         if (je.TryGetInt64(out var l)) return l;
                         if (je.TryGetDouble(out var d)) return d;
@@ -334,10 +334,16 @@ namespace DataEntryGen.Backend.Services
                 }
             }
 
-            // If caller passed a string for an id column, attempt to parse Guid
-            if (value is string vs && !string.IsNullOrEmpty(columnName) && string.Equals(columnName, "id", StringComparison.OrdinalIgnoreCase))
+            // If caller passed a string that looks like a UUID, attempt to parse Guid
+            if (value is string vs)
             {
                 if (Guid.TryParse(vs, out var g)) return g;
+
+                // If it's specifically the primary id column attempt parsing as well
+                if (!string.IsNullOrEmpty(columnName) && string.Equals(columnName, "id", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (Guid.TryParse(vs, out var g2)) return g2;
+                }
             }
 
             return value;

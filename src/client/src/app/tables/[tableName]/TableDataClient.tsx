@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useQueries } from "@tanstack/react-query";
+import { dataApi } from "@/lib/api/client";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -46,15 +48,32 @@ function toDefaultListElements(columns: ColumnInfo[]): LayoutElementConfig[] {
   }));
 }
 
-function parseHardcodedOptions(datasource?: string): string[] {
-  if (!datasource) {
-    return [];
+function parseHardcodedPairs(datasource?: string): { name: string; value: string }[] {
+  if (!datasource) return [];
+
+  const parts = datasource
+    .split("|")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+
+  const pairs: { name: string; value: string }[] = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    const name = parts[i] ?? "";
+    const value = parts[i + 1] ?? "";
+    pairs.push({ name, value });
   }
 
-  return datasource
-    .split("|")
-    .map((option) => option.trim())
-    .filter((option) => option.length > 0);
+  return pairs;
+}
+
+function parseTableDatasource(ds?: string) {
+  if (!ds) return { registrationId: "", displayColumn: "", valueColumn: "" };
+  const parts = ds.split("|");
+  return {
+    registrationId: parts[0] || "",
+    displayColumn: parts[1] || "",
+    valueColumn: parts[2] || "",
+  };
 }
 
 export default function TableDataClient() {
@@ -109,6 +128,44 @@ export default function TableDataClient() {
     return (selected?.layout?.layout ?? toDefaultListElements(schema.columns))
       .filter((item) => item.displayType !== "button");
   }, [layouts, schema, tableName]);
+
+  // Gather all registrationIds referenced by layouts (table datasources)
+  const referencedRegistrationIds = useMemo(() => {
+    const ids = new Set<string>();
+    const allElements = [...detailLayoutElements, ...listLayoutElements];
+    allElements.forEach((el) => {
+      // include table datasources used by dropdowns and labels
+      if ((el.displayType === "dropdown" || el.displayType === "label") && el.datasourceType === "table" && el.datasource) {
+        const parts = el.datasource.split("|");
+        if (parts[0]) ids.add(parts[0]);
+      }
+    });
+    return Array.from(ids);
+  }, [detailLayoutElements, listLayoutElements]);
+
+  // For each referenced registrationId, prepare a query to fetch its rows.
+  const registrationQueries = useMemo(() => {
+    return referencedRegistrationIds.map((regId) => {
+      const reg = registrations.find((r) => r.id === regId);
+      const table = reg?.tableName || "";
+      return {
+        queryKey: ["tableData", table],
+        queryFn: () => (table ? dataApi.getTableRows(table) : Promise.resolve([])),
+        enabled: !!table,
+      };
+    });
+  }, [referencedRegistrationIds, registrations]);
+
+  const registrationResults = useQueries({ queries: registrationQueries });
+
+  const rowsByRegistrationId = useMemo(() => {
+    const map: Record<string, any[]> = {};
+    referencedRegistrationIds.forEach((id, idx) => {
+      const res = registrationResults[idx];
+      map[id] = (res && res.data) || [];
+    });
+    return map;
+  }, [referencedRegistrationIds, registrationResults]);
 
   const handleStartCreate = () => {
     setIsCreating(true);
@@ -333,7 +390,23 @@ export default function TableDataClient() {
         </Label>
 
         {element.displayType === "label" && (
-          <Input id={element.column} value={value} disabled />
+          (() => {
+            if (element.useDatasource && element.datasourceType === "table") {
+              const ds = parseTableDatasource(element.datasource);
+              const lookupRows = rowsByRegistrationId[ds.registrationId] || [];
+              const match = lookupRows.find((r) => String(r[ds.valueColumn]) === String(formData[element.column] || ""));
+              const displayVal = match ? String(match[ds.displayColumn] ?? "") : "";
+              return <Input id={element.column} value={displayVal} disabled />;
+            }
+
+            if (element.displayType === "label" && element.useDatasource && element.datasourceType === "hardcoded") {
+              const pairs = parseHardcodedPairs(element.datasource);
+              const found = pairs.find((p) => String(p.value) === String(formData[element.column] || ""));
+              return <Input id={element.column} value={found ? found.name : ""} disabled />;
+            }
+
+            return <Input id={element.column} value={value} disabled />;
+          })()
         )}
 
         {element.displayType === "text" && (
@@ -383,21 +456,40 @@ export default function TableDataClient() {
                 <SelectValue placeholder="Select value" />
               </SelectTrigger>
               <SelectContent>
-                {parseHardcodedOptions(element.datasource).map((option) => (
-                  <SelectItem key={option} value={option}>{option}</SelectItem>
-                ))}
+                {parseHardcodedPairs(element.datasource).map((option) => (
+                      <SelectItem key={option.value || option.name} value={option.value}>{option.name}</SelectItem>
+                    ))}
               </SelectContent>
             </Select>
           ) : (
-            <Input
-              id={element.column}
-              type="text"
-              value={value}
-              onChange={(e) => handleInputChange(element.column, e.target.value)}
-              disabled={isDisabled}
-              placeholder="Datasource type 'table' not yet expanded in UI"
-              className={error ? "border-destructive" : ""}
-            />
+            (() => {
+              const ds = parseTableDatasource(element.datasource);
+              const lookupRows = rowsByRegistrationId[ds.registrationId] || [];
+
+              const options = lookupRows.map((row) => {
+                const display = row[ds.displayColumn] ?? "";
+                const val = row[ds.valueColumn] ?? "";
+                return { display: String(display), value: String(val) };
+              });
+
+              return (
+                <Select
+                  value={value || "__none__"}
+                  onValueChange={(nextValue) => handleInputChange(element.column, nextValue === "__none__" ? "" : nextValue)}
+                  disabled={isDisabled}
+                >
+                  <SelectTrigger className={error ? "w-full border-destructive" : "w-full"}>
+                    <SelectValue placeholder="Select value" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">None</SelectItem>
+                    {options.map((opt, i) => (
+                      <SelectItem key={i} value={opt.value}>{opt.display}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              );
+            })()
           )
         )}
 
@@ -512,11 +604,30 @@ export default function TableDataClient() {
                 <TableBody>
                   {rows.map((row, index) => (
                     <TableRow key={index}>
-                      {listLayoutElements.map((col, colIndex) => (
-                        <TableCell key={`${col.column}-${colIndex}`} className="max-w-xs truncate">
-                          {valueToString(row[col.value || col.column])}
-                        </TableCell>
-                      ))}
+                      {listLayoutElements.map((col, colIndex) => {
+                        const rawVal = row[col.value || col.column];
+
+                        let cellContent = valueToString(rawVal);
+
+                        if (col.displayType === "label" && col.useDatasource) {
+                          if (col.datasourceType === "table") {
+                            const ds = parseTableDatasource(col.datasource);
+                            const lookupRows = rowsByRegistrationId[ds.registrationId] || [];
+                            const match = lookupRows.find((r) => String(r[ds.valueColumn]) === String(rawVal ?? ""));
+                            cellContent = match ? String(match[ds.displayColumn] ?? "") : "";
+                          } else if (col.datasourceType === "hardcoded") {
+                            const pairs = parseHardcodedPairs(col.datasource);
+                            const found = pairs.find((p) => String(p.value) === String(rawVal ?? ""));
+                            cellContent = found ? found.name : "";
+                          }
+                        }
+
+                        return (
+                          <TableCell key={`${col.column}-${colIndex}`} className="max-w-xs truncate">
+                            {cellContent}
+                          </TableCell>
+                        );
+                      })}
                       <TableCell className="text-right">
                         <div className="flex gap-2 justify-end">
                           <Button
