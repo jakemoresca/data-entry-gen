@@ -3,7 +3,7 @@
 import { useMemo, useState, useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Loader2, Plus } from "lucide-react";
+import { ArrowLeft, Braces, Loader2, Plus } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,6 +13,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useLayout, useRegistrations, useTableSchema, useUpdateLayout } from "@/lib/api/hooks";
 import type { DisplayType, LayoutDefinition, LayoutElementConfig, LayoutRecord } from "@/lib/types";
+import { JsonataBuilder } from "@/components/JsonataBuilder";
+import { isJsonataExpression } from "@/lib/jsonata-utils";
 
 const DISPLAY_TYPES: DisplayType[] = ["label", "text", "number", "textarea", "dropdown", "button"];
 
@@ -97,6 +99,11 @@ export default function LayoutEditorClient() {
   const [newElementColumn, setNewElementColumn] = useState("__none__");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  
+  // JSONata builder dialog state
+  const [jsonataBuilderOpen, setJsonataBuilderOpen] = useState(false);
+  const [jsonataProperty, setJsonataProperty] = useState<"label" | "value" | "datasource" | "dsRegId" | "dsDisplayCol" | "dsValueCol">("label");
+  const [jsonataInitialExpression, setJsonataInitialExpression] = useState("");
 
   const { data: layoutRecord, isLoading } = useLayout(layoutId);
   const { data: registrations = [] } = useRegistrations();
@@ -235,6 +242,77 @@ export default function LayoutEditorClient() {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to save layout";
       setErrorMessage(message);
+    }
+  };
+
+  const handleOpenJsonataBuilder = (property: typeof jsonataProperty, currentValue: string) => {
+    setJsonataProperty(property);
+    setJsonataInitialExpression(currentValue);
+    setJsonataBuilderOpen(true);
+  };
+
+  // Drag and drop reordering for layout elements
+  const handleDragStart = (e: any, index: number) => {
+    e.dataTransfer.setData("text/plain", String(index));
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e: any) => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDrop = (e: any, targetIndex: number) => {
+    e.preventDefault();
+    const srcRaw = e.dataTransfer.getData("text/plain");
+    const srcIndex = Number(srcRaw);
+    if (Number.isNaN(srcIndex)) return;
+    if (!workingRecord) return;
+    if (srcIndex === targetIndex) return;
+
+    updateDraft((current) => {
+      const next = [...current.layout.layout];
+      const [moved] = next.splice(srcIndex, 1);
+      next.splice(targetIndex, 0, moved);
+      return {
+        ...current,
+        layout: {
+          ...current.layout,
+          layout: next,
+        },
+      };
+    });
+
+    setSelectedIndex(targetIndex);
+  };
+
+  const handleSaveJsonataExpression = (expression: string) => {
+    if (!selectedElement) {
+      return;
+    }
+
+    switch (jsonataProperty) {
+      case "label":
+        updateSelectedElement({ label: expression });
+        break;
+      case "value":
+        updateSelectedElement({ value: expression });
+        break;
+      case "datasource":
+        updateSelectedElement({ datasource: expression });
+        break;
+      case "dsRegId":
+        setDsRegId(expression);
+        updateSelectedElement({ datasource: buildTableDatasource(expression, dsDisplayColumn || "", dsValueColumn || "") });
+        break;
+      case "dsDisplayCol":
+        setDsDisplayColumn(expression);
+        updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", expression, dsValueColumn || "") });
+        break;
+      case "dsValueCol":
+        setDsValueColumn(expression);
+        updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", dsDisplayColumn || "", expression) });
+        break;
     }
   };
 
@@ -422,15 +500,24 @@ export default function LayoutEditorClient() {
                 {workingRecord.layout.layout.map((item, index) => (
                   <button
                     key={`${item.displayType}-${index}`}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, index)}
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, index)}
                     onClick={() => setSelectedIndex(index)}
                     className={`w-full rounded-md border p-3 text-left transition-colors ${
                       selectedIndex === index ? "border-primary bg-accent" : "hover:bg-muted"
                     }`}
                   >
-                    <p className="text-sm font-medium">{item.label || "Untitled element"}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {item.displayType} | column: {item.column || "-"}
-                    </p>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium">{item.label || "Untitled element"}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {item.displayType} | column: {item.column || "-"}
+                        </p>
+                      </div>
+                      <div className="text-xs text-muted-foreground">Drag</div>
+                    </div>
                   </button>
                 ))}
               </div>
@@ -459,10 +546,22 @@ export default function LayoutEditorClient() {
                 </div>
                 <div className="space-y-2">
                   <Label>Label</Label>
-                  <Input
-                    value={selectedElement.label}
-                    onChange={(e) => updateSelectedElement({ label: e.target.value })}
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      value={selectedElement.label}
+                      onChange={(e) => updateSelectedElement({ label: e.target.value })}
+                      className="flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => handleOpenJsonataBuilder("label", selectedElement.label)}
+                      title="Open JSONata Expression Builder"
+                    >
+                      <Braces className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label>Value</Label>
@@ -497,10 +596,22 @@ export default function LayoutEditorClient() {
                       </Select>
                     )
                   ) : (
-                    <Input
-                      value={selectedElement.value}
-                      onChange={(e) => updateSelectedElement({ value: e.target.value })}
-                    />
+                    <div className="flex gap-2">
+                      <Input
+                        value={selectedElement.value}
+                        onChange={(e) => updateSelectedElement({ value: e.target.value })}
+                        className="flex-1"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => handleOpenJsonataBuilder("value", selectedElement.value)}
+                        title="Open JSONata Expression Builder"
+                      >
+                        <Braces className="h-4 w-4" />
+                      </Button>
+                    </div>
                   )}
                 </div>
                 <div className="space-y-2">
@@ -571,80 +682,164 @@ export default function LayoutEditorClient() {
                           <>
                             <div className="space-y-2">
                               <Label>Table (registration)</Label>
-                              <Select
-                                value={dsRegId || "__none__"}
-                                onValueChange={(value) => {
-                                  const regId = value === "__none__" ? "" : value || "";
-                                  setDsRegId(regId);
-                                  setDsDisplayColumn("");
-                                  setDsValueColumn("");
-                                  updateSelectedElement({ datasource: buildTableDatasource(regId, "", ""), datasourceType: "table" });
-                                }}
-                              >
-                                <SelectTrigger className="w-full">
-                                  <SelectValue placeholder="Choose table (registration)" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="__none__">None</SelectItem>
-                                  {registrations.map((r) => (
-                                    <SelectItem key={r.id} value={r.id}>{r.tableName || r.id}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                              <div className="flex gap-2">
+                                {isJsonataExpression(dsRegId) ? (
+                                  <Input
+                                    value={dsRegId}
+                                    onChange={(e) => {
+                                      const regId = e.target.value;
+                                      setDsRegId(regId);
+                                      updateSelectedElement({ datasource: buildTableDatasource(regId, dsDisplayColumn || "", dsValueColumn || ""), datasourceType: "table" });
+                                    }}
+                                    className="flex-1 font-mono text-sm"
+                                    placeholder="{ JSONata expression }"
+                                  />
+                                ) : (
+                                  <Select
+                                    value={dsRegId || "__none__"}
+                                    onValueChange={(value) => {
+                                      const regId = value === "__none__" ? "" : value || "";
+                                      setDsRegId(regId);
+                                      setDsDisplayColumn("");
+                                      setDsValueColumn("");
+                                      updateSelectedElement({ datasource: buildTableDatasource(regId, "", ""), datasourceType: "table" });
+                                    }}
+                                  >
+                                    <SelectTrigger className="w-full">
+                                      <SelectValue placeholder="Choose table (registration)" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="__none__">None</SelectItem>
+                                      {registrations.map((r) => (
+                                        <SelectItem key={r.id} value={r.id}>{r.tableName || r.id}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => handleOpenJsonataBuilder("dsRegId", dsRegId)}
+                                  title="Open JSONata Expression Builder"
+                                >
+                                  <Braces className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </div>
 
                             <div className="space-y-2">
                               <Label>Display Column</Label>
-                              <Select
-                                value={dsDisplayColumn || "__none__"}
-                                onValueChange={(value) => {
-                                  const val = value === "__none__" ? "" : value || "";
-                                  setDsDisplayColumn(val);
-                                  updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", val, dsValueColumn || "") });
-                                }}
-                              >
-                                <SelectTrigger className="w-full">
-                                  <SelectValue placeholder="Choose display column" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="__none__">None</SelectItem>
-                                  {(selectedSchema?.columns || []).map((col) => (
-                                    <SelectItem key={col.name} value={col.name}>{col.name}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                              <div className="flex gap-2">
+                                {isJsonataExpression(dsDisplayColumn) ? (
+                                  <Input
+                                    value={dsDisplayColumn}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setDsDisplayColumn(val);
+                                      updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", val, dsValueColumn || "") });
+                                    }}
+                                    className="flex-1 font-mono text-sm"
+                                    placeholder="{ JSONata expression }"
+                                  />
+                                ) : (
+                                  <Select
+                                    value={dsDisplayColumn || "__none__"}
+                                    onValueChange={(value) => {
+                                      const val = value === "__none__" ? "" : value || "";
+                                      setDsDisplayColumn(val);
+                                      updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", val, dsValueColumn || "") });
+                                    }}
+                                  >
+                                    <SelectTrigger className="w-full">
+                                      <SelectValue placeholder="Choose display column" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="__none__">None</SelectItem>
+                                      {(selectedSchema?.columns || []).map((col) => (
+                                        <SelectItem key={col.name} value={col.name}>{col.name}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => handleOpenJsonataBuilder("dsDisplayCol", dsDisplayColumn)}
+                                  title="Open JSONata Expression Builder"
+                                >
+                                  <Braces className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </div>
 
                             <div className="space-y-2">
                               <Label>Value Column</Label>
-                              <Select
-                                value={dsValueColumn || "__none__"}
-                                onValueChange={(value) => {
-                                  const val = value === "__none__" ? "" : value || "";
-                                  setDsValueColumn(val);
-                                  updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", dsDisplayColumn || "", val) });
-                                }}
-                              >
-                                <SelectTrigger className="w-full">
-                                  <SelectValue placeholder="Choose value column" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="__none__">None</SelectItem>
-                                  {(selectedSchema?.columns || []).map((col) => (
-                                    <SelectItem key={col.name} value={col.name}>{col.name}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                              <div className="flex gap-2">
+                                {isJsonataExpression(dsValueColumn) ? (
+                                  <Input
+                                    value={dsValueColumn}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setDsValueColumn(val);
+                                      updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", dsDisplayColumn || "", val) });
+                                    }}
+                                    className="flex-1 font-mono text-sm"
+                                    placeholder="{ JSONata expression }"
+                                  />
+                                ) : (
+                                  <Select
+                                    value={dsValueColumn || "__none__"}
+                                    onValueChange={(value) => {
+                                      const val = value === "__none__" ? "" : value || "";
+                                      setDsValueColumn(val);
+                                      updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", dsDisplayColumn || "", val) });
+                                    }}
+                                  >
+                                    <SelectTrigger className="w-full">
+                                      <SelectValue placeholder="Choose value column" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="__none__">None</SelectItem>
+                                      {(selectedSchema?.columns || []).map((col) => (
+                                        <SelectItem key={col.name} value={col.name}>{col.name}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => handleOpenJsonataBuilder("dsValueCol", dsValueColumn)}
+                                  title="Open JSONata Expression Builder"
+                                >
+                                  <Braces className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </div>
                           </>
                         ) : (
                           <div className="space-y-2">
                             <Label>Datasource (name|value pairs)</Label>
-                            <Input
-                              value={selectedElement.datasource || ""}
-                              onChange={(e) => updateSelectedElement({ datasource: e.target.value })}
-                              placeholder="Example: Red|1|Blue|2"
-                            />
+                            <div className="flex gap-2">
+                              <Input
+                                value={selectedElement.datasource || ""}
+                                onChange={(e) => updateSelectedElement({ datasource: e.target.value })}
+                                placeholder="Example: Red|1|Blue|2"
+                                className="flex-1"
+                              />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={() => handleOpenJsonataBuilder("datasource", selectedElement.datasource || "")}
+                                title="Open JSONata Expression Builder"
+                              >
+                                <Braces className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </div>
                         )}
                       </>
@@ -673,80 +868,164 @@ export default function LayoutEditorClient() {
                       <>
                         <div className="space-y-2">
                           <Label>Table (registration)</Label>
-                          <Select
-                            value={dsRegId || "__none__"}
-                            onValueChange={(value) => {
-                              const regId = value === "__none__" ? "" : value || "";
-                              setDsRegId(regId);
-                              setDsDisplayColumn("");
-                              setDsValueColumn("");
-                              updateSelectedElement({ datasource: buildTableDatasource(regId, "", ""), datasourceType: "table" });
-                            }}
-                          >
-                            <SelectTrigger className="w-full">
-                              <SelectValue placeholder="Choose table (registration)" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__none__">None</SelectItem>
-                              {registrations.map((r) => (
-                                <SelectItem key={r.id} value={r.id}>{r.tableName || r.id}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <div className="flex gap-2">
+                            {isJsonataExpression(dsRegId) ? (
+                              <Input
+                                value={dsRegId}
+                                onChange={(e) => {
+                                  const regId = e.target.value;
+                                  setDsRegId(regId);
+                                  updateSelectedElement({ datasource: buildTableDatasource(regId, dsDisplayColumn || "", dsValueColumn || ""), datasourceType: "table" });
+                                }}
+                                className="flex-1 font-mono text-sm"
+                                placeholder="{ JSONata expression }"
+                              />
+                            ) : (
+                              <Select
+                                value={dsRegId || "__none__"}
+                                onValueChange={(value) => {
+                                  const regId = value === "__none__" ? "" : value || "";
+                                  setDsRegId(regId);
+                                  setDsDisplayColumn("");
+                                  setDsValueColumn("");
+                                  updateSelectedElement({ datasource: buildTableDatasource(regId, "", ""), datasourceType: "table" });
+                                }}
+                              >
+                                <SelectTrigger className="w-full">
+                                  <SelectValue placeholder="Choose table (registration)" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">None</SelectItem>
+                                  {registrations.map((r) => (
+                                    <SelectItem key={r.id} value={r.id}>{r.tableName || r.id}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              onClick={() => handleOpenJsonataBuilder("dsRegId", dsRegId)}
+                              title="Open JSONata Expression Builder"
+                            >
+                              <Braces className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </div>
 
                         <div className="space-y-2">
                           <Label>Display Column</Label>
-                          <Select
-                            value={dsDisplayColumn || "__none__"}
-                            onValueChange={(value) => {
-                              const val = value === "__none__" ? "" : value || "";
-                              setDsDisplayColumn(val);
-                              updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", val, dsValueColumn || "") });
-                            }}
-                          >
-                            <SelectTrigger className="w-full">
-                              <SelectValue placeholder="Choose display column" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__none__">None</SelectItem>
-                              {(selectedSchema?.columns || []).map((col) => (
-                                <SelectItem key={col.name} value={col.name}>{col.name}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <div className="flex gap-2">
+                            {isJsonataExpression(dsDisplayColumn) ? (
+                              <Input
+                                value={dsDisplayColumn}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDsDisplayColumn(val);
+                                  updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", val, dsValueColumn || "") });
+                                }}
+                                className="flex-1 font-mono text-sm"
+                                placeholder="{ JSONata expression }"
+                              />
+                            ) : (
+                              <Select
+                                value={dsDisplayColumn || "__none__"}
+                                onValueChange={(value) => {
+                                  const val = value === "__none__" ? "" : value || "";
+                                  setDsDisplayColumn(val);
+                                  updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", val, dsValueColumn || "") });
+                                }}
+                              >
+                                <SelectTrigger className="w-full">
+                                  <SelectValue placeholder="Choose display column" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">None</SelectItem>
+                                  {(selectedSchema?.columns || []).map((col) => (
+                                    <SelectItem key={col.name} value={col.name}>{col.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              onClick={() => handleOpenJsonataBuilder("dsDisplayCol", dsDisplayColumn)}
+                              title="Open JSONata Expression Builder"
+                            >
+                              <Braces className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </div>
 
                         <div className="space-y-2">
                           <Label>Value Column</Label>
-                          <Select
-                            value={dsValueColumn || "__none__"}
-                            onValueChange={(value) => {
-                              const val = value === "__none__" ? "" : value || "";
-                              setDsValueColumn(val);
-                              updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", dsDisplayColumn || "", val) });
-                            }}
-                          >
-                            <SelectTrigger className="w-full">
-                              <SelectValue placeholder="Choose value column" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__none__">None</SelectItem>
-                              {(selectedSchema?.columns || []).map((col) => (
-                                <SelectItem key={col.name} value={col.name}>{col.name}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <div className="flex gap-2">
+                            {isJsonataExpression(dsValueColumn) ? (
+                              <Input
+                                value={dsValueColumn}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDsValueColumn(val);
+                                  updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", dsDisplayColumn || "", val) });
+                                }}
+                                className="flex-1 font-mono text-sm"
+                                placeholder="{ JSONata expression }"
+                              />
+                            ) : (
+                              <Select
+                                value={dsValueColumn || "__none__"}
+                                onValueChange={(value) => {
+                                  const val = value === "__none__" ? "" : value || "";
+                                  setDsValueColumn(val);
+                                  updateSelectedElement({ datasource: buildTableDatasource(dsRegId || "", dsDisplayColumn || "", val) });
+                                }}
+                              >
+                                <SelectTrigger className="w-full">
+                                  <SelectValue placeholder="Choose value column" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">None</SelectItem>
+                                  {(selectedSchema?.columns || []).map((col) => (
+                                    <SelectItem key={col.name} value={col.name}>{col.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              onClick={() => handleOpenJsonataBuilder("dsValueCol", dsValueColumn)}
+                              title="Open JSONata Expression Builder"
+                            >
+                              <Braces className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </div>
                       </>
                     ) : (
                       <div className="space-y-2">
                         <Label>Datasource</Label>
-                        <Input
-                          value={selectedElement.datasource || ""}
-                          onChange={(e) => updateSelectedElement({ datasource: e.target.value })}
-                          placeholder="hardcoded: choice 1|choice 2 or table: <registrationId>|<displayColumn>|<valueColumn>"
-                        />
+                        <div className="flex gap-2">
+                          <Input
+                            value={selectedElement.datasource || ""}
+                            onChange={(e) => updateSelectedElement({ datasource: e.target.value })}
+                            placeholder="hardcoded: choice 1|choice 2 or table: <registrationId>|<displayColumn>|<valueColumn>"
+                            className="flex-1"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={() => handleOpenJsonataBuilder("datasource", selectedElement.datasource || "")}
+                            title="Open JSONata Expression Builder"
+                          >
+                            <Braces className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
                     )}
                   </>
@@ -787,6 +1066,21 @@ export default function LayoutEditorClient() {
           </CardContent>
         </Card>
       </div>
+
+      {/* JSONata Expression Builder Dialog */}
+      {schema && (
+        <JsonataBuilder
+          open={jsonataBuilderOpen}
+          onOpenChange={setJsonataBuilderOpen}
+          columns={schema.columns}
+          initialExpression={jsonataInitialExpression}
+          onSave={handleSaveJsonataExpression}
+          currentData={workingRecord?.layout.layout.reduce((acc, el) => {
+            acc[el.column] = el.value;
+            return acc;
+          }, {} as Record<string, any>)}
+        />
+      )}
     </div>
   );
 }

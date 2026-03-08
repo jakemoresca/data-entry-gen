@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { dataApi } from "@/lib/api/client";
 import { useParams } from "next/navigation";
@@ -25,6 +25,8 @@ import {
 import { valueToString, convertValue } from "@/lib/type-conversion";
 import type { DataRow, ColumnInfo, LayoutElementConfig } from "@/lib/types";
 import { Loader2, ArrowLeft } from "lucide-react";
+import { useJsonataEvaluation, evaluateExpression, evaluateDatasource } from "@/lib/api/use-jsonata-evaluation";
+import { isJsonataExpression, extractJsonataExpression, evaluateJsonata } from "@/lib/jsonata-utils";
 
 function toDefaultDetailElements(columns: ColumnInfo[]): LayoutElementConfig[] {
   return columns.map((column) => ({
@@ -166,6 +168,13 @@ export default function TableDataClient() {
     });
     return map;
   }, [referencedRegistrationIds, registrationResults]);
+
+  // Evaluate JSONata expressions in form data
+  const evaluatedFormData = useJsonataEvaluation(
+    detailLayoutElements,
+    formData,
+    rowsByRegistrationId
+  );
 
   const handleStartCreate = () => {
     setIsCreating(true);
@@ -327,6 +336,16 @@ export default function TableDataClient() {
     const isDisabled = element.disabled || !!(editingRow && column?.isPrimaryKey);
     const error = validationErrors[element.column];
 
+    // Evaluate label if it's a JSONata expression
+    const displayLabel = (() => {
+      if (isJsonataExpression(element.label)) {
+        const context = { ...formData, $tables: rowsByRegistrationId };
+        const evaluated = evaluateExpression(element.label, context);
+        return evaluated !== undefined ? String(evaluated) : element.label;
+      }
+      return element.label || element.column;
+    })();
+
     if (element.displayType === "button") {
       if (element.action === "save") {
         return null;
@@ -335,7 +354,7 @@ export default function TableDataClient() {
       if (element.action === "delete") {
         return (
           <div key={`button-${index}`} className="space-y-2">
-            <Label>{element.label || "Delete"}</Label>
+            <Label>{displayLabel || "Delete"}</Label>
             <Button
               type="button"
               variant="destructive"
@@ -346,7 +365,7 @@ export default function TableDataClient() {
                 }
               }}
             >
-              {element.label || "Delete"}
+              {displayLabel || "Delete"}
             </Button>
           </div>
         );
@@ -355,10 +374,10 @@ export default function TableDataClient() {
       if (element.action === "link") {
         return (
           <div key={`button-${index}`} className="space-y-2">
-            <Label>{element.label || "Link"}</Label>
+            <Label>{displayLabel || "Link"}</Label>
             <Link href={element.datasource || "#"}>
               <Button type="button" variant="outline">
-                {element.label || "Open"}
+                {displayLabel || "Open"}
               </Button>
             </Link>
           </div>
@@ -368,11 +387,94 @@ export default function TableDataClient() {
       return null;
     }
 
+    // If the element does not reference a real schema column
+    // allow it if it uses JSONata expressions for label or value (computed field)
+    const hasJsonataLabel = isJsonataExpression(element.label);
+    const hasJsonataValue = isJsonataExpression(element.value);
+
     if (!column) {
+      if (!hasJsonataLabel && !hasJsonataValue && element.displayType !== "button") {
+        return (
+          <div key={`missing-${index}`} className="space-y-2">
+            <Label>{displayLabel || element.column}</Label>
+            <p className="text-sm text-muted-foreground">Column '{element.column}' not found in schema.</p>
+          </div>
+        );
+      }
+
+      // Render a computed field (no backing column) using JSONata results
+      const context = { ...formData, $tables: rowsByRegistrationId };
+
+      // Small component to evaluate expression synchronously if possible,
+      // otherwise evaluate asynchronously and update when ready.
+      function ComputedField({ expr, id, disabled }: { expr: string; id: string; disabled?: boolean }) {
+        const [val, setVal] = useState<string>(() => {
+          const sync = evaluateExpression(expr, context);
+          return sync !== undefined && sync !== null ? String(sync) : "";
+        });
+
+        useEffect(() => {
+          let mounted = true;
+          const sync = evaluateExpression(expr, context);
+          if (sync !== undefined) {
+            setVal(sync !== null ? String(sync) : "");
+            return;
+          }
+
+          // Attempt async evaluation
+          const raw = isJsonataExpression(expr) ? extractJsonataExpression(expr) : expr;
+          evaluateJsonata(raw, context).then((res) => {
+            if (!mounted) return;
+            if (res.success) {
+              setVal(res.result !== undefined && res.result !== null ? String(res.result) : "");
+            } else {
+              console.warn("JSONata async evaluation failed:", res.error);
+              setVal("");
+            }
+          }).catch((err) => {
+            console.error("JSONata evaluateJsonata error:", err);
+            if (mounted) setVal("");
+          });
+
+          return () => { mounted = false; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [expr, JSON.stringify(context)]);
+
+        return <Input id={id} value={val} disabled={disabled} />;
+      }
+
+      if (element.displayType === "label") {
+        return (
+          <div key={`computed-${index}`} className="space-y-2">
+            <Label>{displayLabel || element.column}</Label>
+            <ComputedField expr={element.value} id={`computed-${index}`} disabled />
+          </div>
+        );
+      }
+
+      if (element.displayType === "text" || element.displayType === "number") {
+        return (
+          <div key={`computed-${index}`} className="space-y-2">
+            <Label htmlFor={`computed-${index}`}>{displayLabel || element.column}</Label>
+            <ComputedField expr={element.value} id={`computed-${index}`} disabled={true} />
+          </div>
+        );
+      }
+
+      if (element.displayType === "textarea") {
+        return (
+          <div key={`computed-${index}`} className="space-y-2">
+            <Label htmlFor={`computed-${index}`}>{displayLabel || element.column}</Label>
+            <ComputedField expr={element.value} id={`computed-${index}`} disabled={true} />
+          </div>
+        );
+      }
+
+      // Fallback: render label+disabled input
       return (
-        <div key={`missing-${index}`} className="space-y-2">
-          <Label>{element.label || element.column}</Label>
-          <p className="text-sm text-muted-foreground">Column '{element.column}' not found in schema.</p>
+        <div key={`computed-${index}`} className="space-y-2">
+          <Label>{displayLabel || element.column}</Label>
+          <ComputedField expr={element.value} id={`computed-${index}`} disabled />
         </div>
       );
     }
@@ -380,7 +482,7 @@ export default function TableDataClient() {
     return (
       <div key={`${element.column}-${index}`} className="space-y-2">
         <Label htmlFor={element.column}>
-          {element.label || column.name}
+          {displayLabel || column.name}
           {!column.isNullable && !column.isPrimaryKey && (
             <span className="text-destructive ml-1">*</span>
           )}
@@ -392,11 +494,18 @@ export default function TableDataClient() {
         {element.displayType === "label" && (
           (() => {
             if (element.useDatasource && element.datasourceType === "table") {
-              const ds = parseTableDatasource(element.datasource);
-              const lookupRows = rowsByRegistrationId[ds.registrationId] || [];
-              const match = lookupRows.find((r) => String(r[ds.valueColumn]) === String(formData[element.column] || ""));
-              const displayVal = match ? String(match[ds.displayColumn] ?? "") : "";
-              return <Input id={element.column} value={displayVal} disabled />;
+              // Evaluate datasource if it contains JSONata expressions
+              const context = { ...formData, $tables: rowsByRegistrationId };
+              const ds = evaluateDatasource(element.datasource, element.datasourceType, context);
+              
+              if (ds) {
+                const lookupRows = rowsByRegistrationId[ds.registrationId] || [];
+                const match = lookupRows.find((r) => String(r[ds.valueColumn]) === String(formData[element.column] || ""));
+                const displayVal = match ? String(match[ds.displayColumn] ?? "") : "";
+                return <Input id={element.column} value={displayVal} disabled />;
+              }
+              
+              return <Input id={element.column} value={value} disabled />;
             }
 
             if (element.displayType === "label" && element.useDatasource && element.datasourceType === "hardcoded") {
@@ -463,7 +572,14 @@ export default function TableDataClient() {
             </Select>
           ) : (
             (() => {
-              const ds = parseTableDatasource(element.datasource);
+              // Evaluate datasource if it contains JSONata expressions
+              const context = { ...formData, $tables: rowsByRegistrationId };
+              const ds = evaluateDatasource(element.datasource, element.datasourceType, context);
+              
+              if (!ds) {
+                return <Input id={element.column} value={value} onChange={(e) => handleInputChange(element.column, e.target.value)} disabled={isDisabled} />;
+              }
+              
               const lookupRows = rowsByRegistrationId[ds.registrationId] || [];
 
               const options = lookupRows.map((row) => {
@@ -595,9 +711,21 @@ export default function TableDataClient() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    {listLayoutElements.map((col, index) => (
-                      <TableHead key={`${col.column}-${index}`}>{col.label || col.column}</TableHead>
-                    ))}
+                    {listLayoutElements.map((col, index) => {
+                      // Evaluate label if it's a JSONata expression
+                      const displayLabel = (() => {
+                        if (isJsonataExpression(col.label)) {
+                          const context = { $tables: rowsByRegistrationId };
+                          const evaluated = evaluateExpression(col.label, context);
+                          return evaluated !== undefined ? String(evaluated) : col.label;
+                        }
+                        return col.label || col.column;
+                      })();
+                      
+                      return (
+                        <TableHead key={`${col.column}-${index}`}>{displayLabel}</TableHead>
+                      );
+                    })}
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -610,11 +738,16 @@ export default function TableDataClient() {
                         let cellContent = valueToString(rawVal);
 
                         if (col.displayType === "label" && col.useDatasource) {
+                          // Evaluate datasource if it contains JSONata expressions
+                          const context = { ...row, $tables: rowsByRegistrationId };
+                          
                           if (col.datasourceType === "table") {
-                            const ds = parseTableDatasource(col.datasource);
-                            const lookupRows = rowsByRegistrationId[ds.registrationId] || [];
-                            const match = lookupRows.find((r) => String(r[ds.valueColumn]) === String(rawVal ?? ""));
-                            cellContent = match ? String(match[ds.displayColumn] ?? "") : "";
+                            const ds = evaluateDatasource(col.datasource, col.datasourceType, context);
+                            if (ds) {
+                              const lookupRows = rowsByRegistrationId[ds.registrationId] || [];
+                              const match = lookupRows.find((r) => String(r[ds.valueColumn]) === String(rawVal ?? ""));
+                              cellContent = match ? String(match[ds.displayColumn] ?? "") : "";
+                            }
                           } else if (col.datasourceType === "hardcoded") {
                             const pairs = parseHardcodedPairs(col.datasource);
                             const found = pairs.find((p) => String(p.value) === String(rawVal ?? ""));
